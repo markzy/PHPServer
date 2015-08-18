@@ -10,32 +10,28 @@ require_once("httprequest.php");
 require_once("httpresponse.php");
 require_once("cgistream.php");
 
-class ServerThread extends Thread{
-}
-
 
 class HttpServer{
-    public $addr = "127.0.0.1";
-    public $port = "12000";
-    public $threads = array();
-
-    public function __construct(){
+    public $client;
+    public function __construct($client){
+        $this->client = $client;
     }
 
     public function run(){
-        $socket = socket_create_listen("12000");
-        if(!$socket)
-            throw new Exception("cannnot initial server on {$this->addr}:{$this->port}");
-
-        stream_wrapper_register("cgi", "CGIStream");
-
-        while(($client = socket_accept($socket))){
-            $request = new Http_Request($client);
-            $request->process();
-            $response = $this->route($request);
-            socket_write($client,$response->render());
-            socket_close($client);
+        $client = $this->client;
+        $request = new Http_Request($client);
+        $wrong_request = $request->process();
+        if(!$wrong_request){
+        $response = $this->route($request);
+        $res = $response->render();}
+        else{
+            $res = '';
         }
+//        print_r($res);
+//        $res = "HTTP/1.1 200 OK\r\nContent-Type: text/css\r\nContent-Length: 41\r\n\r\nh2.highlight\n{\nbackground-color:yellow\n}\n";
+        socket_write($client,$res);
+        socket_close($client);
+        return 0;
     }
 
     // only for simple GET method, range is not supported
@@ -69,7 +65,7 @@ class HttpServer{
             'SCRIPT_FILENAME' => $path,
             'SCRIPT_NAME' => $request->path,
             'SERVER_NAME' => $request->headers['Host'],
-            'SERVER_PORT' => 13000,
+            'SERVER_PORT' => 12000,
             'SERVER_PROTOCOL' => 'HTTP/1.1',
             'SERVER_SOFTWARE' => 'PHPServer/0.1',
 //            'REMOTE_ADDR' => $request->remote_addr,
@@ -153,7 +149,33 @@ class HttpServer{
         "xlc" => "application/vnd.ms-excel", "xlm" => "application/vnd.ms-excel", "xls" => "application/vnd.ms-excel", "xlt" => "application/vnd.ms-excel", "xlw" => "application/vnd.ms-excel", "xof" => "x-world/x-vrml", "xpm" => "image/x-xpixmap", "xwd" => "image/x-xwindowdump", "z" => "application/x-compress", "zip" => "application/zip");
 }
 
-$a = new HttpServer();
-$a->run();
-//$r = $a->get_static_response("1","/Users/Mark/Codes/PHPServer/sites/form.html");
-//echo $r->render();
+
+
+$socket = socket_create(AF_INET,SOCK_STREAM,SOL_TCP);
+socket_set_option($socket,SOL_SOCKET,SO_REUSEADDR,1);
+socket_bind($socket,"127.0.0.1",12000);
+socket_listen($socket,5);
+
+stream_wrapper_register("cgi", "CGIStream");
+
+
+//socket_set_nonblock($socket);
+
+while(1){
+    if(($client = socket_accept($socket)) !== false) {
+        echo "new socket\n";
+        $pid = pcntl_fork();
+        if ($pid > 0) {
+            echo "forked new child\n";
+            socket_close($client);
+        } elseif ($pid === 0) {
+            $server = new HttpServer($client);
+            $status = $server->run();
+            exit;
+        } else
+            throw new Exception("fail to fork!");
+    }
+//    usleep(10000);
+}
+
+

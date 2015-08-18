@@ -32,6 +32,7 @@ class Http_Request{
 
     public function get_data(){
         $this->data = socket_read($this->socket,1024);
+        return strlen($this->data);
     }
 
     public function read_data(){
@@ -85,8 +86,13 @@ class Http_Request{
     }
 
     public function process(){
-        $this->get_data();
-        $this->read_data();
+        $datalength = $this->get_data();
+        if($datalength > 5)
+        {
+            $this->read_data();
+            return 0;
+        }
+        return 1;
     }
 
 }
