@@ -11,7 +11,7 @@ require_once("httpresponse.php");
 require_once("cgistream.php");
 
 
-class HttpServer{
+class HttpWorker{
     public $client;
     public function __construct($client){
         $this->client = $client;
@@ -19,19 +19,30 @@ class HttpServer{
 
     public function run(){
         $client = $this->client;
+
+        while($this->process());
+        socket_close($client);
+        return 0;
+    }
+
+    public function process(){
+        $client = $this->client;
         $request = new Http_Request($client);
         $wrong_request = $request->process();
         if(!$wrong_request){
-        $response = $this->route($request);
-        $res = $response->render();}
-        else{
-            $res = '';
+            $response = $this->route($request);
+            $result = $response->render();
         }
-//        print_r($res);
-//        $res = "HTTP/1.1 200 OK\r\nContent-Type: text/css\r\nContent-Length: 41\r\n\r\nh2.highlight\n{\nbackground-color:yellow\n}\n";
-        socket_write($client,$res);
-        socket_close($client);
-        return 0;
+        else{
+            $response = 0;
+            $result = '';
+        }
+        socket_write($client,$result);
+        if(isset($request->headers['Connection']) && $request->headers['Connection']=='keep-alive') {
+            return 1;
+        }
+        else
+            return 0;
     }
 
     // only for simple GET method, range is not supported
@@ -150,32 +161,20 @@ class HttpServer{
 }
 
 
+//stream_wrapper_register("cgi", "CGIStream");
+//
+//$socket = socket_create(AF_INET,SOCK_STREAM,SOL_TCP);
+//socket_set_option($socket,SOL_SOCKET,SO_REUSEADDR,1);
+//socket_bind($socket,"127.0.0.1",12000);
+//socket_listen($socket,SOMAXCONN);
+//while(1) {
+//    $client = socket_accept($socket);
+////    echo "got it\n";
+//    $server = new HttpWorker($client);
+//    $server->run();
+//}
 
-$socket = socket_create(AF_INET,SOCK_STREAM,SOL_TCP);
-socket_set_option($socket,SOL_SOCKET,SO_REUSEADDR,1);
-socket_bind($socket,"127.0.0.1",12000);
-socket_listen($socket,5);
-
-stream_wrapper_register("cgi", "CGIStream");
 
 
-//socket_set_nonblock($socket);
-
-while(1){
-    if(($client = socket_accept($socket)) !== false) {
-        echo "new socket\n";
-        $pid = pcntl_fork();
-        if ($pid > 0) {
-            echo "forked new child\n";
-            socket_close($client);
-        } elseif ($pid === 0) {
-            $server = new HttpServer($client);
-            $status = $server->run();
-            exit;
-        } else
-            throw new Exception("fail to fork!");
-    }
-//    usleep(10000);
-}
 
 
