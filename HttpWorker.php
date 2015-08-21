@@ -11,47 +11,24 @@ require_once("httpresponse.php");
 require_once("cgistream.php");
 
 
-class HttpWorker{
-    public $client;
-    public function __construct($client){
-        $this->client = $client;
-    }
+class HttpWorker {
 
-    public function run(){
-        $client = $this->client;
-
-        while($this->process());
-        socket_close($client);
-        return 0;
-    }
-
-    public function process(){
-        $client = $this->client;
+    public static function parse_request($client){
         $request = new Http_Request($client);
         $wrong_request = $request->process();
-        if(!$wrong_request){
-            $response = $this->route($request);
-            $result = $response->render();
-        }
-        else{
-            $response = 0;
-            $result = '';
-        }
-        socket_write($client,$result);
-        if(isset($request->headers['Connection']) && $request->headers['Connection']=='keep-alive') {
-            return 1;
-        }
+        if($wrong_request)
+            return false;
         else
-            return 0;
+            return $request;
     }
 
     // only for simple GET method, range is not supported
-    public function get_static_response($request,$path){
+    public static function get_static_response($request,$path){
         if(is_file($path)){
             $file_size =filesize($path);
 
             $headers = array(
-                'Content-Type'=>$this->get_mime_type($path)
+                'Content-Type'=>self::get_mime_type($path)
             );
 
             $file = fopen($path,'rb');
@@ -67,7 +44,7 @@ class HttpWorker{
     }
 
     // process PHP files for this server, GET & POST is supported
-    public function get_php_response($request,$path){
+    public static function get_php_response($request,$path){
         $cgi_env = array(
             'QUERY_STRING' => $request->query,
             'REQUEST_METHOD' => $request->method,
@@ -116,19 +93,20 @@ class HttpWorker{
         return new Http_Response("200",$buffer,$headers);
     }
 
-    public function route($request){
+//    public static function wrong_request($client){
+//        socket_close($client);
+//    }
+
+    public static function route($request){
         $path = $request->path;
         $doc_root = __DIR__ . '/sites';
         if(preg_match('#/$#',$path)){
             $path = "/index.html";
         }
-        if(preg_match('#\.php$#',$path))
-            return $this->get_php_response($request,"$doc_root$path");
-        else
-            return $this->get_static_response($request,"$doc_root$path");
+        return "$doc_root$path";
     }
 
-    public function get_mime_type($path){
+    public static function get_mime_type($path){
         $path_info = pathinfo($path);
         $extension = strtolower($path_info['extension']);
         return @static::$mime_types[$extension];
