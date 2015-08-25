@@ -1,6 +1,7 @@
 # PHPServer
 HttpSever implemented with PHP
 
-* multi-processed
-* support multi http methods
-* support php-cgi
+* Multi-process and prefork
+* GET, POST and Keep-alive
+* Support php-cgi
+* LRU Cache implemented, even faster :)
