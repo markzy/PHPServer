@@ -14,7 +14,7 @@ stream_wrapper_register("cgi", "CGIStream");
 
 class MasterServer {
     public $listener;
-    public $pre_fork_num = 3;
+    public $pre_fork_num = 2;
 
     public $continue_work = 1; // the flag indicate whether the child process should continue;
 
@@ -36,9 +36,11 @@ class MasterServer {
 
     public function init_listener() {
         $socket = socket_create(AF_INET,SOCK_STREAM,SOL_TCP);
-        socket_set_option($socket,SOL_SOCKET,SO_REUSEADDR,1);
+        socket_set_option($socket,SOL_SOCKET,SO_SNDBUF,1048576);
         socket_bind($socket,"127.0.0.1",12000);
         socket_listen($socket,10);
+        socket_set_nonblock($socket);
+//        var_dump(socket_get_option($socket,SOL_SOCKET,SO_SNDBUF));
         $this->listener = $socket;
     }
 
@@ -60,54 +62,75 @@ class MasterServer {
         $socket = $this->listener;
         while($this->continue_work) {
             $client = socket_accept($socket);
-            while($this->process($client));
-            socket_close($client);
+            if($client>0) {
+                while ($this->process($client)) ;
+                socket_close($client);
+            }else
+                usleep(200000);
         }
     }
 
+    # old codes
     public function process($client){
         $cache = $this->cache;
         $request = HttpWorker::parse_request($client);
         if(!$request) {
             return false;
         }
-        $path = HttpWorker::route($request);
-        $cache_node = $cache->get($path);
-        if($cache_node == null ){
-//            echo "not valid\n";
-            $response = $this->no_cache($request,$path);
-            $result = $response->render();
-            socket_write($client,$result);
-            $cache_node = new Node($path,$result,filectime($path));
-            $cache->put($cache_node);
-            return $this->keep_alive($request);
-        }
-        elseif($cache_node->isoutofdate()) {
-//            echo "out of date\n";
-            $response = $this->no_cache($request,$path);
-            $result = $response->render();
-            socket_write($client,$result);
-            //store in Cache
-            $cache_node->setData($result);
-            $cache->put($cache_node);
-            return $this->keep_alive($request);
+
+        $route_result = HttpWorker::route($request);
+
+        $result = '';
+
+        if($route_result['status'] != 200){
+            $result = $this->get_special_result($request,$route_result);
         }
         else {
-            // valid cache
-//            echo "valid\n";
-            $result = $cache_node->getData();
-            socket_write($client,$result);
-            return $this->keep_alive($request);
+            $path = $route_result['uri'];
+            $cache_node = $cache->get($path);
+            if(1){
+//            if($cache_node == null ){
+                $response = $this->no_cache($request, $route_result);
+                $result = $response->render();
+//                $cache_node = new Node($route_result['uri'],$result,filectime($path));
+//                $cache->put($cache_node);
+            } elseif ($cache_node->isoutofdate()) {
+                $response = $this->no_cache($request, $path);
+                $result = $response->render();
+                $cache_node->setData($result);
+                $cache->put($cache_node);
+            } else {
+                $result = $cache_node->getData();
+            }
         }
+
+        socket_write($client,$result,strlen($result));
+        return $this->keep_alive($request);
     }
 
-    public function no_cache($request,$path){
-        if(preg_match('#\.php$#',$path))
-            $response = HttpWorker::get_php_response($request,$path);
-        else
-            $response = HttpWorker::get_static_response($request,$path);
+    public function get_special_result($request,$route_result){
+        $result = '';
+        switch($route_result['status']){
+            case 307:
+                $headers['Location'] = $route_result['path'];
+                $response = HttpWorker::get_pre_response($route_result['status'],'',$headers,'Moved Temporarily');
+                $result = $response->render();
+                break;
+            default:
+                break;
+        }
+        return $result;
+    }
 
-        return $response;
+    public function no_cache($request,$route_result){
+        switch($route_result['function']){
+            case 'php':
+                return HttpWorker::get_php_response($request,$route_result);
+            case 'static':
+                return HttpWorker::get_static_response($request,$route_result);
+            default:
+                return false;
+        }
     }
 
     public function keep_alive($request){

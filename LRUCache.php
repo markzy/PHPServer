@@ -60,7 +60,7 @@ class LRUCache {
      * @return boolean true on success, false if cache has zero capacity
      */
 
-    // edit by Mark -- change the interface to accept Node rather key & value
+    // edit by Mark -- change the interface to accept Node rather than key & value
     public function put(Node $node) {
         if ($this->capacity <= 0) { return false; }
         $key = $node->getKey();

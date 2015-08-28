@@ -6,9 +6,13 @@
  * Time: 2:36 PM
  */
 
-require_once("httprequest.php");
-require_once("httpresponse.php");
-require_once("cgistream.php");
+require_once("HttpRequest.php");
+require_once("HttpResponse.php");
+require_once("CGIStream.php");
+
+class Config {
+    static  $docroot ="/Users/Mark/Codes/PHPServer/sites";
+}
 
 
 class HttpWorker {
@@ -23,10 +27,10 @@ class HttpWorker {
     }
 
     // only for simple GET method, range is not supported
-    public static function get_static_response($request,$path){
+    public static function get_static_response($request,$route_result){
+        $path = $route_result['uri'];
         if(is_file($path)){
             $file_size =filesize($path);
-
             $headers = array(
                 'Content-Type'=>self::get_mime_type($path)
             );
@@ -44,14 +48,19 @@ class HttpWorker {
     }
 
     // process PHP files for this server, GET & POST is supported
-    public static function get_php_response($request,$path){
+    public static function get_php_response($request,$route_result){
+//        var_dump($route_result);
+//        echo $request->uri . "\n";
+        # to be modified
         $cgi_env = array(
             'QUERY_STRING' => $request->query,
             'REQUEST_METHOD' => $request->method,
             'REQUEST_URI' => $request->uri,
             'REDIRECT_STATUS' => 200,
-            'SCRIPT_FILENAME' => $path,
-            'SCRIPT_NAME' => $request->path,
+            'SCRIPT_FILENAME' => $route_result['uri'],
+            'SCRIPT_NAME' => $route_result['path'],
+//            'SCRIPT_FILENAME' =>"/Users/Mark/Codes/PHPServer/sites/myblog/index.php",
+//            'SCRIPT_NAME' => "/myblog/index.php",
             'SERVER_NAME' => $request->headers['Host'],
             'SERVER_PORT' => 12000,
             'SERVER_PROTOCOL' => 'HTTP/1.1',
@@ -59,7 +68,7 @@ class HttpWorker {
 //            'REMOTE_ADDR' => $request->remote_addr,
 
         );
-        # change this when adding POST support!
+
         if($request->has_content == 1){
             $cgi_env['CONTENT_TYPE'] = $request->headers['Content-Type'];
             $cgi_env['CONTENT_LENGTH'] = $request->headers['Content-Length'];
@@ -93,18 +102,134 @@ class HttpWorker {
         return new Http_Response("200",$buffer,$headers);
     }
 
-//    public static function wrong_request($client){
-//        socket_close($client);
-//    }
+    public static function get_pre_response($status,$content,$headers,$status_msg){
+        return new Http_Response($status,$content,$headers,$status_msg);
+    }
+
+    // simple fallback
+    public static function fallback($path){
+        if(!preg_match('/\/$/',$path))
+            $path = $path . "/";
+
+        if(file_exists(Config::$docroot. $path . "index.php")) {
+            return $path . "index.php";
+        }
+        elseif(file_exists(Config::$docroot. $path . "index.html")) {
+            return $path . "index.html";
+        }
+        else {
+            return false;
+        }
+    }
 
     public static function route($request){
         $path = $request->path;
-        $doc_root = __DIR__ . '/sites';
-        if(preg_match('#/$#',$path)){
-            $path = "/index.html";
+        if($htaccess_path = self::check_htaccess($path)) {
+            if($array = self::parse_htaccess($htaccess_path))
+                if($array['RewriteCond'][0]=="%{REQUEST_FILENAME}" && $array['RewriteCond'][1]=="!-f")
+                    return self::yaf_route($request,$htaccess_path,$array['RewriteRule']);
         }
-        return "$doc_root$path";
+        return self::no_htaccess($request);
     }
+
+    # "//" Bug might happen
+    public static function check_htaccess($path){
+        $array = explode("/",$path);
+        $check = array();
+        while(array_pop($array)!= NULL){
+            $check[] = implode("/",$array);
+        }
+        foreach ($check as $key => $uri) {
+            if(file_exists(Config::$docroot.$uri."/.htaccess"))
+                return $uri;
+        }
+        return false;
+    }
+
+    // ONLY FOR YAF APPLICATIONS!
+    public static function parse_htaccess($path){
+        $full_path = Config::$docroot . $path . "/.htaccess";
+        $file = fopen($full_path,'r');
+
+        $array = array();
+        while(!feof($file)) {
+            $line = fgets($file);
+            $line = trim($line);
+            if($line != NULL) {
+                $tokens = explode(" ",$line);
+                $key = array_shift($tokens);
+                $array[$key] = $tokens;
+            }
+        }
+        if(strtolower($array['RewriteEngine'][0]) == 'on'){
+            array_shift($array);
+            return $array;
+        }
+        else
+            return false;
+    }
+
+    public static function yaf_route($request,$htaccess_path,$rule){
+        $path = $request->path;
+
+        $full_path = Config::$docroot . $path;
+        $rewrite_path = Config::$docroot . $htaccess_path;
+        $to_rewrite = substr($full_path,strlen($rewrite_path));
+
+        if(file_exists($full_path)) {
+            return self::no_htaccess($request);
+        }
+        else {
+            $to_rewrite = preg_replace("/{$rule[0]}/",$rule[1],$to_rewrite,1);
+            $path = $htaccess_path . "/" . $to_rewrite;
+            return self::get_route_result(200,$path);
+        }
+    }
+
+    public static function no_htaccess($request){
+        $path = $request->path;
+
+        $full_path = Config::$docroot . $path;
+
+        if(is_dir($full_path)) {
+            $result = self::fallback($path);
+            if($result) {
+                if(!preg_match('/\/$/',$full_path)) {
+                    $route_result = self::get_route_result(307,$path."/","pre");
+                }
+                else {
+                    $route_result = self::get_route_result(200,$result);
+                }
+            }
+            else {
+                $route_result = self::get_route_result(200,$result);
+            }
+        }
+        else {
+            $route_result = self::get_route_result(200,$path);
+        }
+        return $route_result;
+    }
+
+    public static function get_route_result($status,$path,$function = ''){
+        $result['status'] = $status;
+        $result['uri'] = Config::$docroot . $path;
+        $result['path'] = $path;
+        if($function == ''){
+            if(preg_match('/\.php$/',$path)){
+                $result['function'] = 'php';
+            }
+            else {
+                $result['function'] = 'static';
+            }
+        }
+        else {
+            $result['function'] = $function;
+        }
+        return $result;
+    }
+
+
 
     public static function get_mime_type($path){
         $path_info = pathinfo($path);
@@ -121,38 +246,18 @@ class HttpWorker {
         "htt" => "text/webviewhtml", "ico" => "image/x-icon", "ief" => "image/ief", "iii" => "application/x-iphone", "ins" => "application/x-internet-signup", "isp" => "application/x-internet-signup", "jfif" => "image/pipeg", "jpe" => "image/jpeg", "jpeg" => "image/jpeg", "jpg" => "image/jpeg",
         "js" => "application/x-javascript", "latex" => "application/x-latex", "lha" => "application/octet-stream", "lsf" => "video/x-la-asf", "lsx" => "video/x-la-asf", "lzh" => "application/octet-stream", "m13" => "application/x-msmediaview", "m14" => "application/x-msmediaview", "m3u" => "audio/x-mpegurl", "man" => "application/x-troff-man",
         "mdb" => "application/x-msaccess", "me" => "application/x-troff-me", "mht" => "message/rfc822", "mhtml" => "message/rfc822", "mid" => "audio/mid", "mny" => "application/x-msmoney", "mov" => "video/quicktime", "movie" => "video/x-sgi-movie", "mp2" => "video/mpeg", "mp3" => "audio/mpeg",
-        'mp4' => 'video/mp4',
-        "mpa" => "video/mpeg", "mpe" => "video/mpeg", "mpeg" => "video/mpeg", "mpg" => "video/mpeg", "mpp" => "application/vnd.ms-project", "mpv2" => "video/mpeg", "ms" => "application/x-troff-ms", "mvb" => "application/x-msmediaview", "nws" => "message/rfc822", "oda" => "application/oda",
-        'ogg' => 'video/ogg',
-        'ogv' => 'video/ogg',
-        "p10" => "application/pkcs10", "p12" => "application/x-pkcs12", "p7b" => "application/x-pkcs7-certificates", "p7c" => "application/x-pkcs7-mime", "p7m" => "application/x-pkcs7-mime", "p7r" => "application/x-pkcs7-certreqresp", "p7s" => "application/x-pkcs7-signature", "pbm" => "image/x-portable-bitmap", "pdf" => "application/pdf", "pfx" => "application/x-pkcs12",
+        'mp4' => 'video/mp4', "mpa" => "video/mpeg", "mpe" => "video/mpeg", "mpeg" => "video/mpeg", "mpg" => "video/mpeg", "mpp" => "application/vnd.ms-project", "mpv2" => "video/mpeg", "ms" => "application/x-troff-ms", "mvb" => "application/x-msmediaview", "nws" => "message/rfc822", "oda" => "application/oda",
+        'ogg' => 'video/ogg', 'ogv' => 'video/ogg', "p10" => "application/pkcs10", "p12" => "application/x-pkcs12", "p7b" => "application/x-pkcs7-certificates", "p7c" => "application/x-pkcs7-mime", "p7m" => "application/x-pkcs7-mime", "p7r" => "application/x-pkcs7-certreqresp", "p7s" => "application/x-pkcs7-signature", "pbm" => "image/x-portable-bitmap", "pdf" => "application/pdf", "pfx" => "application/x-pkcs12",
         "pgm" => "image/x-portable-graymap", "pko" => "application/ynd.ms-pkipko", "pma" => "application/x-perfmon", "pmc" => "application/x-perfmon", "pml" => "application/x-perfmon", "pmr" => "application/x-perfmon", "pmw" => "application/x-perfmon", "png" => "image/png", "pnm" => "image/x-portable-anymap", "pot" => "application/vnd.ms-powerpoint", "ppm" => "image/x-portable-pixmap",
         "pps" => "application/vnd.ms-powerpoint", "ppt" => "application/vnd.ms-powerpoint", "prf" => "application/pics-rules", "ps" => "application/postscript", "pub" => "application/x-mspublisher", "qt" => "video/quicktime", "ra" => "audio/x-pn-realaudio", "ram" => "audio/x-pn-realaudio", "ras" => "image/x-cmu-raster", "rgb" => "image/x-rgb",
         "rmi" => "audio/mid", "roff" => "application/x-troff", "rtf" => "application/rtf", "rtx" => "text/richtext", "scd" => "application/x-msschedule", "sct" => "text/scriptlet", "setpay" => "application/set-payment-initiation", "setreg" => "application/set-registration-initiation", "sh" => "application/x-sh", "shar" => "application/x-shar",
         "sit" => "application/x-stuffit", "snd" => "audio/basic", "spc" => "application/x-pkcs7-certificates", "spl" => "application/futuresplash", "src" => "application/x-wais-source", "sst" => "application/vnd.ms-pkicertstore", "stl" => "application/vnd.ms-pkistl", "stm" => "text/html", "svg" => "image/svg+xml", "sv4cpio" => "application/x-sv4cpio",
         "sv4crc" => "application/x-sv4crc", "t" => "application/x-troff", "tar" => "application/x-tar", "tcl" => "application/x-tcl", "tex" => "application/x-tex", "texi" => "application/x-texinfo", "texinfo" => "application/x-texinfo", "tgz" => "application/x-compressed", "tif" => "image/tiff", "tiff" => "image/tiff",
         "tr" => "application/x-troff", "trm" => "application/x-msterminal", "tsv" => "text/tab-separated-values", "txt" => "text/plain", "uls" => "text/iuls", "ustar" => "application/x-ustar", "vcf" => "text/x-vcard", "vrml" => "x-world/x-vrml", "wav" => "audio/x-wav", "wcm" => "application/vnd.ms-works",
-        "wdb" => "application/vnd.ms-works",
-        'webm' => 'video/webm',
-        "wks" => "application/vnd.ms-works", "wmf" => "application/x-msmetafile", "wps" => "application/vnd.ms-works", "wri" => "application/x-mswrite", "wrl" => "x-world/x-vrml", "wrz" => "x-world/x-vrml", "xaf" => "x-world/x-vrml", "xbm" => "image/x-xbitmap", "xla" => "application/vnd.ms-excel",
+        "wdb" => "application/vnd.ms-works", 'webm' => 'video/webm', "wks" => "application/vnd.ms-works", "wmf" => "application/x-msmetafile", "wps" => "application/vnd.ms-works", "wri" => "application/x-mswrite", "wrl" => "x-world/x-vrml", "wrz" => "x-world/x-vrml", "xaf" => "x-world/x-vrml", "xbm" => "image/x-xbitmap", "xla" => "application/vnd.ms-excel",
         "xlc" => "application/vnd.ms-excel", "xlm" => "application/vnd.ms-excel", "xls" => "application/vnd.ms-excel", "xlt" => "application/vnd.ms-excel", "xlw" => "application/vnd.ms-excel", "xof" => "x-world/x-vrml", "xpm" => "image/x-xpixmap", "xwd" => "image/x-xwindowdump", "z" => "application/x-compress", "zip" => "application/zip");
 }
 
-
-//stream_wrapper_register("cgi", "CGIStream");
-//
-//$socket = socket_create(AF_INET,SOCK_STREAM,SOL_TCP);
-//socket_set_option($socket,SOL_SOCKET,SO_REUSEADDR,1);
-//socket_bind($socket,"127.0.0.1",12000);
-//socket_listen($socket,SOMAXCONN);
-//while(1) {
-//    $client = socket_accept($socket);
-////    echo "got it\n";
-//    $server = new HttpWorker($client);
-//    $server->run();
-//}
-
-
-
+//HttpWorker::route("/myblog/tools/benchmark");
 
 

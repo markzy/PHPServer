@@ -12,7 +12,7 @@ class Http_Response{
     public $headers;                // associative array of HTTP headers (name => list of values)
 
     public $content = '';           // response body, as string (optional)
-
+    public $stream;                 // response as stream
 
     function __construct($status = 200, $content = '', $headers = null, $status_msg = null){
         $this->status = $status;
