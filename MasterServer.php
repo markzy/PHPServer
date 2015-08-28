@@ -88,12 +88,15 @@ class MasterServer {
         else {
             $path = $route_result['uri'];
             $cache_node = $cache->get($path);
-            if(1){
-//            if($cache_node == null ){
+            if($route_result['function'] == 'php'){
                 $response = $this->no_cache($request, $route_result);
                 $result = $response->render();
-//                $cache_node = new Node($route_result['uri'],$result,filectime($path));
-//                $cache->put($cache_node);
+            }
+            elseif($cache_node == null ){
+                $response = $this->no_cache($request, $route_result);
+                $result = $response->render();
+                $cache_node = new Node($route_result['uri'],$result,filectime($path));
+                $cache->put($cache_node);
             } elseif ($cache_node->isoutofdate()) {
                 $response = $this->no_cache($request, $path);
                 $result = $response->render();
