@@ -40,7 +40,6 @@ class MasterServer {
         socket_bind($socket,"127.0.0.1",12000);
         socket_listen($socket,10);
         socket_set_nonblock($socket);
-//        var_dump(socket_get_option($socket,SOL_SOCKET,SO_SNDBUF));
         $this->listener = $socket;
     }
 
@@ -146,6 +145,9 @@ class MasterServer {
 
 }
 
+if(Config::$docroot == ''){
+    Config::$docroot = __DIR__ . "/sites";
+}
 
 $a = new MasterServer();
 $a->run();

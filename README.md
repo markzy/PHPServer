@@ -17,3 +17,11 @@ Running PHPServer directly
 php MasterServer.php
 ```
 In any browser (Chrome, Safari, etc.), enter localhost:12000/yoursite, then you can get what you want!
+
+## Other Tips
+You may change your site root in `HttpWorker.php`
+```php
+class Config {
+    static  $docroot ="where you like";
+}
+```

@@ -11,7 +11,7 @@ require_once("HttpResponse.php");
 require_once("CGIStream.php");
 
 class Config {
-    static  $docroot ="/Users/Mark/Codes/PHPServer/sites";
+    static  $docroot ="";
 }
 
 
@@ -49,8 +49,6 @@ class HttpWorker {
 
     // process PHP files for this server, GET & POST is supported
     public static function get_php_response($request,$route_result){
-//        var_dump($route_result);
-//        echo $request->uri . "\n";
         # to be modified
         $cgi_env = array(
             'QUERY_STRING' => $request->query,
@@ -59,8 +57,6 @@ class HttpWorker {
             'REDIRECT_STATUS' => 200,
             'SCRIPT_FILENAME' => $route_result['uri'],
             'SCRIPT_NAME' => $route_result['path'],
-//            'SCRIPT_FILENAME' =>"/Users/Mark/Codes/PHPServer/sites/myblog/index.php",
-//            'SCRIPT_NAME' => "/myblog/index.php",
             'SERVER_NAME' => $request->headers['Host'],
             'SERVER_PORT' => 12000,
             'SERVER_PROTOCOL' => 'HTTP/1.1',
@@ -257,7 +253,3 @@ class HttpWorker {
         "wdb" => "application/vnd.ms-works", 'webm' => 'video/webm', "wks" => "application/vnd.ms-works", "wmf" => "application/x-msmetafile", "wps" => "application/vnd.ms-works", "wri" => "application/x-mswrite", "wrl" => "x-world/x-vrml", "wrz" => "x-world/x-vrml", "xaf" => "x-world/x-vrml", "xbm" => "image/x-xbitmap", "xla" => "application/vnd.ms-excel",
         "xlc" => "application/vnd.ms-excel", "xlm" => "application/vnd.ms-excel", "xls" => "application/vnd.ms-excel", "xlt" => "application/vnd.ms-excel", "xlw" => "application/vnd.ms-excel", "xof" => "x-world/x-vrml", "xpm" => "image/x-xpixmap", "xwd" => "image/x-xwindowdump", "z" => "application/x-compress", "zip" => "application/zip");
 }
-
-//HttpWorker::route("/myblog/tools/benchmark");
-
-
