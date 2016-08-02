@@ -1,54 +1,48 @@
 <?php
 /**
- * Created by PhpStorm.
- * User: Mark
+ * Author: Mark
  * Date: 8/12/15
- * Time: 2:36 PM
  */
 
-require_once("HttpRequest.php");
-require_once("HttpResponse.php");
-require_once("CGIStream.php");
-
-class Config {
-    static  $docroot ="";
-}
+require_once("http_request.php");
+require_once("http_response.php");
+require_once("cgi_stream.php");
+require_once("yaf_support.php");
 
 
 class HttpWorker {
+    static $cache = null;
 
-    public static function parse_request($client){
+    public static function parse_request($client) {
         $request = new Http_Request($client);
         $wrong_request = $request->process();
-        if($wrong_request)
+        if ($wrong_request)
             return false;
         else
             return $request;
     }
 
     // only for simple GET method, range is not supported
-    public static function get_static_response($request,$route_result){
+    public static function get_static_response($request, $route_result) {
         $path = $route_result['uri'];
-        if(is_file($path)){
-            $file_size =filesize($path);
+        if (is_file($path)) {
+            $file_size = filesize($path);
             $headers = array(
-                'Content-Type'=>self::get_mime_type($path)
+                'Content-Type' => self::get_mime_type($path)
             );
 
-            $file = fopen($path,'rb');
-            $content = fread($file,$file_size);
-            return new Http_Response("200",$content,$headers);
-        }
-        elseif(is_dir($path)){
-            return new Http_Response("403","Directory listing is temporarily not supported");
-        }
-        else{
-            return new Http_Response("404","404 File Not Found");
+            $file = fopen($path, 'rb');
+            $content = fread($file, $file_size);
+            return new Http_Response("200", $content, $headers);
+        } elseif (is_dir($path)) {
+            return new Http_Response("403", "Directory listing is temporarily not supported");
+        } else {
+            return new Http_Response("404", "404 File Not Found");
         }
     }
 
     // process PHP files for this server, GET & POST is supported
-    public static function get_php_response($request,$route_result){
+    public static function get_php_response($request, $route_result) {
         # to be modified
         $cgi_env = array(
             'QUERY_STRING' => $request->query,
@@ -60,24 +54,21 @@ class HttpWorker {
             'SERVER_NAME' => $request->headers['Host'],
             'SERVER_PORT' => 12000,
             'SERVER_PROTOCOL' => 'HTTP/1.1',
-            'SERVER_SOFTWARE' => 'PHPServer/0.1',
-//            'REMOTE_ADDR' => $request->remote_addr,
-
+            'SERVER_SOFTWARE' => 'PHPServer/0.2',
         );
 
-        if($request->has_content == 1){
+        if ($request->has_content == 1) {
             $cgi_env['CONTENT_TYPE'] = $request->headers['Content-Type'];
             $cgi_env['CONTENT_LENGTH'] = $request->headers['Content-Length'];
         }
 
-        foreach ($request->headers as $name => $values)
-        {
-            $name = str_replace('-','_', $name);
+        foreach ($request->headers as $name => $values) {
+            $name = str_replace('-', '_', $name);
             $name = strtoupper($name);
             $cgi_env["HTTP_$name"] = $values;
         }
 
-        fseek($request->content_stream,0);
+        fseek($request->content_stream, 0);
 
         $context = stream_context_create(array(
             'cgi' => array(
@@ -87,151 +78,149 @@ class HttpWorker {
         ));
         $cgi_stream = fopen("cgi://php-cgi", 'rb', false, $context);
         $buffer = '';
-        while($content = fread($cgi_stream,4096)){
-            $buffer = $buffer.$content;
+        while ($content = fread($cgi_stream, 4096)) {
+            $buffer = $buffer . $content;
         }
 
         $headers = array(
-            'Content-Type'=>"text/html"
+            'Content-Type' => "text/html"
         );
 
-        return new Http_Response("200",$buffer,$headers);
+        return new Http_Response("200", $buffer, $headers);
     }
 
-    public static function get_pre_response($status,$content,$headers,$status_msg){
-        return new Http_Response($status,$content,$headers,$status_msg);
+    public static function get_pre_response($status, $content, $headers, $status_msg) {
+        return new Http_Response($status, $content, $headers, $status_msg);
     }
 
     // simple fallback
-    public static function fallback($path){
-        if(!preg_match('/\/$/',$path))
+    public static function fallback($path) {
+        if (!preg_match('/\/$/', $path))
             $path = $path . "/";
 
-        if(file_exists(Config::$docroot. $path . "index.php")) {
+        if (file_exists(Config::$docroot . $path . "index.php")) {
             return $path . "index.php";
-        }
-        elseif(file_exists(Config::$docroot. $path . "index.html")) {
+        } elseif (file_exists(Config::$docroot . $path . "index.html")) {
             return $path . "index.html";
-        }
-        else {
+        } else {
             return false;
         }
     }
 
-    public static function route($request){
+    public static function route($request) {
         $path = $request->path;
-        if($htaccess_path = self::check_htaccess($path)) {
-            if($array = self::parse_htaccess($htaccess_path))
-                if($array['RewriteCond'][0]=="%{REQUEST_FILENAME}" && $array['RewriteCond'][1]=="!-f")
-                    return self::yaf_route($request,$htaccess_path,$array['RewriteRule']);
+
+        if (Config::$yaf) {
+            $check_yaf = YAFSupport::check($path, $request);
+            if ($check_yaf != -1) {
+                return $check_yaf;
+            }
         }
+
         return self::no_htaccess($request);
     }
 
-    # "//" Bug might happen
-    public static function check_htaccess($path){
-        $array = explode("/",$path);
-        $check = array();
-        while(array_pop($array)!= NULL){
-            $check[] = implode("/",$array);
-        }
-        foreach ($check as $key => $uri) {
-            if(file_exists(Config::$docroot.$uri."/.htaccess"))
-                return $uri;
-        }
-        return false;
-    }
-
-    // ONLY FOR YAF APPLICATIONS!
-    public static function parse_htaccess($path){
-        $full_path = Config::$docroot . $path . "/.htaccess";
-        $file = fopen($full_path,'r');
-
-        $array = array();
-        while(!feof($file)) {
-            $line = fgets($file);
-            $line = trim($line);
-            if($line != NULL) {
-                $tokens = explode(" ",$line);
-                $key = array_shift($tokens);
-                $array[$key] = $tokens;
-            }
-        }
-        if(strtolower($array['RewriteEngine'][0]) == 'on'){
-            array_shift($array);
-            return $array;
-        }
-        else
-            return false;
-    }
-
-    public static function yaf_route($request,$htaccess_path,$rule){
-        $path = $request->path;
-
-        $full_path = Config::$docroot . $path;
-        $rewrite_path = Config::$docroot . $htaccess_path;
-        $to_rewrite = substr($full_path,strlen($rewrite_path));
-
-        if(file_exists($full_path)) {
-            return self::no_htaccess($request);
-        }
-        else {
-            $to_rewrite = preg_replace("/{$rule[0]}/",$rule[1],$to_rewrite,1);
-            $path = $htaccess_path . "/" . $to_rewrite;
-            return self::get_route_result(200,$path);
-        }
-    }
-
-    public static function no_htaccess($request){
+    public static function no_htaccess($request) {
         $path = $request->path;
 
         $full_path = Config::$docroot . $path;
 
-        if(is_dir($full_path)) {
+        if (is_dir($full_path)) {
             $result = self::fallback($path);
-            if($result) {
-                if(!preg_match('/\/$/',$full_path)) {
-                    $route_result = self::get_route_result(307,$path."/","pre");
+            if ($result) {
+                if (!preg_match('/\/$/', $full_path)) {
+                    $route_result = self::get_route_result(307, $path . "/", "pre");
+                } else {
+                    $route_result = self::get_route_result(200, $result);
                 }
-                else {
-                    $route_result = self::get_route_result(200,$result);
-                }
+            } else {
+                $route_result = self::get_route_result(200, $result);
             }
-            else {
-                $route_result = self::get_route_result(200,$result);
-            }
-        }
-        else {
-            $route_result = self::get_route_result(200,$path);
+        } else {
+            $route_result = self::get_route_result(200, $path);
         }
         return $route_result;
     }
 
-    public static function get_route_result($status,$path,$function = ''){
+    public static function get_route_result($status, $path, $function = '') {
         $result['status'] = $status;
         $result['uri'] = Config::$docroot . $path;
         $result['path'] = $path;
-        if($function == ''){
-            if(preg_match('/\.php$/',$path)){
+        if ($function == '') {
+            if (preg_match('/\.php$/', $path)) {
                 $result['function'] = 'php';
-            }
-            else {
+            } else {
                 $result['function'] = 'static';
             }
-        }
-        else {
+        } else {
             $result['function'] = $function;
         }
         return $result;
     }
 
-
-
-    public static function get_mime_type($path){
+    public static function get_mime_type($path) {
         $path_info = pathinfo($path);
         $extension = strtolower($path_info['extension']);
         return @static::$mime_types[$extension];
     }
+
+    public static function get_special_result($request, $route_result) {
+        $result = '';
+        switch ($route_result['status']) {
+            case 307:
+                $headers['Location'] = $route_result['path'];
+                $response = HttpWorker::get_pre_response($route_result['status'], '', $headers, 'Moved Temporarily');
+                $result = $response->render();
+                break;
+            default:
+                break;
+        }
+        return $result;
+    }
+
+    public static function no_cache($request, $route_result) {
+        switch ($route_result['function']) {
+            case 'php':
+                return HttpWorker::get_php_response($request, $route_result);
+            case 'static':
+                return HttpWorker::get_static_response($request, $route_result);
+            default:
+                return false;
+        }
+    }
+
+    public static function keep_alive($request) {
+        if (isset($request->headers['Connection']) && $request->headers['Connection'] == 'keep-alive')
+            return true;
+        else
+            return false;
+    }
+
+    public static function process($client) {
+        $request = HttpWorker::parse_request($client);
+        if (!$request) {
+            return false;
+        }
+
+        $route_result = HttpWorker::route($request);
+        $result = '';
+
+        if ($route_result['status'] != 200) {
+            $result = HttpWorker::get_special_result($request, $route_result);
+        } else {
+            if ($route_result['function'] == 'php' || Config::$cache != 'LRU') {
+                $response = HttpWorker::no_cache($request, $route_result);
+                $result = $response->render();
+            } else {
+                $cache = HttpWorker::$cache;
+                $path = $route_result['uri'];
+                $cache_node = $cache->get($path);
+            }
+        }
+        socket_write($client, $result, strlen($result));
+        return HttpWorker::keep_alive($request);
+    }
+
 
     static $mime_types = array("323" => "text/h323", "acx" => "application/internet-property-stream", "ai" => "application/postscript", "aif" => "audio/x-aiff", "aifc" => "audio/x-aiff", "aiff" => "audio/x-aiff", 'apk' => "application/vnd.android.package-archive",
         "asf" => "video/x-ms-asf", "asr" => "video/x-ms-asf", "asx" => "video/x-ms-asf", "au" => "audio/basic", "avi" => "video/quicktime", "axs" => "application/olescript", "bas" => "text/plain", "bcpio" => "application/x-bcpio", "bin" => "application/octet-stream", "bmp" => "image/bmp",
@@ -252,4 +241,11 @@ class HttpWorker {
         "tr" => "application/x-troff", "trm" => "application/x-msterminal", "tsv" => "text/tab-separated-values", "txt" => "text/plain", "uls" => "text/iuls", "ustar" => "application/x-ustar", "vcf" => "text/x-vcard", "vrml" => "x-world/x-vrml", "wav" => "audio/x-wav", "wcm" => "application/vnd.ms-works",
         "wdb" => "application/vnd.ms-works", 'webm' => 'video/webm', "wks" => "application/vnd.ms-works", "wmf" => "application/x-msmetafile", "wps" => "application/vnd.ms-works", "wri" => "application/x-mswrite", "wrl" => "x-world/x-vrml", "wrz" => "x-world/x-vrml", "xaf" => "x-world/x-vrml", "xbm" => "image/x-xbitmap", "xla" => "application/vnd.ms-excel",
         "xlc" => "application/vnd.ms-excel", "xlm" => "application/vnd.ms-excel", "xls" => "application/vnd.ms-excel", "xlt" => "application/vnd.ms-excel", "xlw" => "application/vnd.ms-excel", "xof" => "x-world/x-vrml", "xpm" => "image/x-xpixmap", "xwd" => "image/x-xwindowdump", "z" => "application/x-compress", "zip" => "application/zip");
+
+}
+
+class Config {
+    static $docroot = "";
+    static $yaf = false;
+    static $cache = false;
 }
