@@ -5,20 +5,15 @@
  */
 
 require_once("http_worker.php");
-require_once("lru_cache.php");
-
 stream_wrapper_register("cgi", "CGIStream");
 
 class MasterServer {
     public $listener;
-    public $pre_fork_num = 3;
-
-    public $cache_size = 10;
     public $cache;
 
     public function __construct() {
-        $this->cache = new LRUCache($this->cache_size);
-        # add parse-option feature when possible +_+
+        $this->cache = new LRUCache(Config::$cache_size);
+        # add parse-option() when totally finished+_+
     }
 
     public function run() {
@@ -37,29 +32,38 @@ class MasterServer {
     }
 
     public function pre_fork() {
-        foreach (range(1, $this->pre_fork_num) as $child_id) {
+        $lock = sem_get(ftok(__FILE__, 'p'));
+        foreach (range(1, Config::$pre_fork_num) as $child_id) {
             $pid = pcntl_fork();
             if ($pid > 0) {
                 continue;
             } elseif ($pid == 0) {
-                $this->child_run($child_id);
+                $this->child_run($child_id, $lock);
                 exit;
             }
         }
     }
 
-    public function child_run($child_id) {
+    public function child_run($child_id, $lock) {
         $socket = $this->listener;
         socket_set_nonblock($socket);
+        $accept_watcher = new EvIo($socket, Ev::READ, function ($watcher, $revent) use ($child_id, $lock) {
 
-        $accept_watcher = new EvIo($socket, Ev::READ, function ($watcher, $revent) use ($child_id) {
-            echo "child" . $child_id . " get this connenction\n";
+            if (!sem_acquire($lock, true)) return;
             $client = socket_accept($watcher->data);
             socket_set_nonblock($client);
+            sem_release($lock);
 
-            $evio = new EvIo($client, Ev::READ, function ($watcher, $revent) {
-                $keep_alive = HttpWorker::process($watcher->data[0]);
-                if (!$keep_alive) {
+            if ($client <= 0) return;
+
+            $evio = new EvIo($client, Ev::READ, function ($watcher, $revent) use ($child_id) {
+                $result = HttpWorker::process($watcher->data[0]);
+                $route_result = $result[1];
+                if (trim($route_result) && Config::$print_result) {
+                    echo "Worker " . $child_id . " successfully processed " . $route_result . "\n";
+                }
+                if (!$result[0]) {
+                    // check if request asks for keep-alive
                     EvIoManager::remove($watcher);
                 }
                 return;

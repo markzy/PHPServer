@@ -5,6 +5,10 @@
  * Date: 16/8/2
  */
 class YAFSupport {
+    /* Not Finished!
+       These only support default YAF rewrite rules.
+    */
+
     public static function check($path, $request) {
         if ($htaccess_path = YAFSupport::check_htaccess($path)) {
             if ($array = YAFSupport::parse_htaccess($htaccess_path))
@@ -56,11 +60,11 @@ class YAFSupport {
         $to_rewrite = substr($full_path, strlen($rewrite_path));
 
         if (file_exists($full_path)) {
-            return HttpWorker::no_htaccess($request);
+            return Router::no_htaccess($request);
         } else {
             $to_rewrite = preg_replace("/{$rule[0]}/", $rule[1], $to_rewrite, 1);
             $path = $htaccess_path . "/" . $to_rewrite;
-            return HttpWorker::get_route_result(200, $path);
+            return Router::get_route_result(200, $path);
         }
     }
 }
