@@ -12,7 +12,7 @@ class MasterServer {
     public $cache;
 
     public function __construct() {
-        $this->cache = new LRUCache(Config::$cache_size);
+        HttpWorker::$cache = new LRUCache(Config::$cache_size);
         # add parse-option() when totally finished+_+
     }
 
@@ -24,9 +24,9 @@ class MasterServer {
 
     public function init_listener() {
         $socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
-        socket_set_option($socket, SOL_SOCKET, SO_SNDBUF, 1048576);
+        socket_set_option($socket, SOL_SOCKET, SO_SNDBUF, Config::$buf_size);
         socket_bind($socket, "127.0.0.1", 12000);
-        socket_listen($socket, 10);
+        socket_listen($socket, 128);
         socket_set_nonblock($socket);
         $this->listener = $socket;
     }
@@ -49,12 +49,14 @@ class MasterServer {
         socket_set_nonblock($socket);
         $accept_watcher = new EvIo($socket, Ev::READ, function ($watcher, $revent) use ($child_id, $lock) {
 
-            if (!sem_acquire($lock, true)) return;
-            $client = socket_accept($watcher->data);
-            socket_set_nonblock($client);
-            sem_release($lock);
+//            if (!sem_acquire($lock, true)) return;
+            @$client = socket_accept($watcher->data);
 
-            if ($client <= 0) return;
+            if ($client === FALSE) return;
+
+            socket_set_block($client);
+//            sem_release($lock);
+
 
             $evio = new EvIo($client, Ev::READ, function ($watcher, $revent) use ($child_id) {
                 $result = HttpWorker::process($watcher->data[0]);

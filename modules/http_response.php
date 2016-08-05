@@ -1,9 +1,10 @@
 <?php
+
 /**
  * Author: Mark
  * Date: 8/12/15
  */
-class Http_Response{
+class Http_Response {
 
     public $status;                 // HTTP status code
     public $status_msg;             // HTTP status message
@@ -11,30 +12,30 @@ class Http_Response{
 
     public $content = '';           // response body, as string (optional)
     public $stream;                 // response as stream
+    public $output_type;
 
-    function __construct($status = 200, $content = '', $headers = null, $status_msg = null){
+    function __construct($status = 200, $content = '', $headers = null, $status_msg = null) {
         $this->status = $status;
         $this->status_msg = $status_msg;
 
         if (is_resource($content)) {
             $this->stream = $content;
-        }
-        else {
+            $this->output_type = 1;
+        } else {
             $this->content = $content;
+            $this->output_type = 0;
         }
         $this->headers = $headers ?: array();
     }
 
-
-
-    static function render_status($status, $status_msg = null){
+    static function render_status($status, $status_msg = null) {
         if (empty($status_msg)) {
             $status_msg = static::$status_messages[$status];
         }
         return "HTTP/1.1 $status $status_msg\r\n";
     }
 
-    static function render_headers($headers){
+    static function render_headers($headers) {
         //buffer
         ob_start();
         foreach ($headers as $name => $values) {
@@ -42,8 +43,7 @@ class Http_Response{
                 foreach ($values as $value) {
                     echo "$name: $value\r\n";
                 }
-            }
-            else {
+            } else {
                 echo "$name: $values\r\n";
             }
         }
@@ -52,19 +52,18 @@ class Http_Response{
         return ob_get_clean();
     }
 
-    function render(){
+    function render() {
         $headers = $this->headers;
 
         if (!isset($headers['Content-Length'])) {
             $headers['Content-Length'] = array($this->get_content_length());
         }
 
-        return  static::render_status($this->status, $this->status_msg).
-        static::render_headers($headers).
-        $this->content;
+        return static::render_status($this->status, $this->status_msg) .
+        static::render_headers($headers);
     }
 
-    function get_content_length(){
+    function get_content_length() {
         return strlen($this->content);
     }
 

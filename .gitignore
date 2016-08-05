@@ -1,3 +1,5 @@
 myblog/
 .idea
 .DS_Store
+sites/*
+others

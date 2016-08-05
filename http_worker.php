@@ -31,12 +31,14 @@ class HttpWorker {
         if (is_file($path)) {
             $file_size = filesize($path);
             $headers = array(
-                'Content-Type' => self::get_mime_type($path)
+                'Server' => 'PHPServer',
+                'Content-Type' => self::get_mime_type($path),
+                'Content-Length' => $file_size,
+                'Connection' => 'keep-alive'
             );
 
             $file = fopen($path, 'rb');
-            $content = fread($file, $file_size);
-            return new Http_Response("200", $content, $headers);
+            return new Http_Response("200", $file, $headers);
         } elseif (is_dir($path)) {
             return new Http_Response("403", "Directory listing is temporarily not supported");
         } else {
@@ -81,12 +83,15 @@ class HttpWorker {
         ));
         $cgi_stream = fopen("cgi://php-cgi", 'rb', false, $context);
         $buffer = '';
+
         while ($content = fread($cgi_stream, 4096)) {
             $buffer = $buffer . $content;
-        }
+        };
 
+        $start = strpos($buffer, 'Content-type:') + 13;
+        $length = strpos($buffer, '\r\n\r\n') - $start;
         $headers = array(
-            'Content-Type' => "text/html"
+            'Content-Type' => substr($buffer, $start, $length)
         );
 
         return new Http_Response("200", $buffer, $headers);
@@ -100,7 +105,11 @@ class HttpWorker {
     public static function get_mime_type($path) {
         $path_info = pathinfo($path);
         $extension = strtolower($path_info['extension']);
-        return Config::$mime_types[$extension];
+        if (isset(Config::$mime_types[$extension])) {
+            return Config::$mime_types[$extension];
+        } else {
+            return "application/octet-stream";
+        }
     }
 
     public static function get_special_result($request, $route_result) {
@@ -137,27 +146,68 @@ class HttpWorker {
 
     public static function process($client) {
         $request = HttpWorker::parse_request($client);
+
         if (!$request) {
             return false;
         }
 
         $route_result = Router::route($request);
-        $result = '';
 
         if ($route_result['status'] != 200) {
-            $result = HttpWorker::get_special_result($request, $route_result);
+            self::static_output($client, HttpWorker::get_special_result($request, $route_result));
         } else {
-            if ($route_result['function'] == 'php' || Config::$cache != 'LRU') {
-                $response = HttpWorker::no_cache($request, $route_result);
-                $result = $response->render();
+            $response = HttpWorker::no_cache($request, $route_result);
+            $header = $response->render();
+            socket_write($client, $header);
+
+            if ($response->output_type) {
+                self::stream_output($client, $response->stream);
             } else {
-                $cache = HttpWorker::$cache;
-                $path = $route_result['uri'];
-                $cache_node = $cache->get($path);
+                self::static_output($client, $response->content);
             }
         }
-        socket_write($client, $result, strlen($result));
+
         return [HttpWorker::keep_alive($request), $route_result['uri']];
+    }
+
+    public static function stream_output($client, $resource) {
+        while ($resource != NULL && !feof($resource)) {
+            $buf = fread($resource, 4096);
+            self::full_socket_write($client, $buf);
+        }
+        @fclose($resource);
+    }
+
+    public static function static_output($client, $content) {
+        $total_length = strlen($content);
+        $bytes_written = 0;
+        $buf_size = Config::$buf_size;
+        while ($total_length - $bytes_written > $buf_size) {
+            self::full_socket_write($client, substr($content, $bytes_written, $buf_size));
+            $bytes_written += $buf_size;
+        }
+        self::full_socket_write($client, substr($content, $bytes_written));
+    }
+
+    public static function full_socket_write($client, $buf) {
+        $length = strlen($buf);
+        while (true) {
+            $sent = socket_write($client, $buf);
+            if ($sent === false) {
+                break;
+            }
+            // Check if the entire message has been sented
+            if ($sent < $length) {
+                // If not sent the entire message.
+                // Get the part of the message that has not yet been sented as message
+                $buf = substr($buf, $sent);
+
+                // Get the length of the not sented part
+                $length -= $sent;
+            } else {
+                break;
+            }
+        }
     }
 }
 
